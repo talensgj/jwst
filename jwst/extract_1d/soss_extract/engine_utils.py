@@ -663,18 +663,70 @@ def get_n_nodes(grid, fct, divmax=1000, tol=0.0, rtol=1.48e-4):
 
     # Make sure all values of n_grid where assigned during the process.
     if (n_grid == -1).any():
-        msg = "Values where not assigned at grid position: {}"
+        msg = "Values were not assigned at grid position: {}"
         raise ValueError(msg.format(np.where(n_grid == -1)[0]))
 
     return n_grid, residual
 
 
-def adapt_grid(grid, fct, n_max=32, rtol=10e-6, **kwargs):
+def estim_integration_err(grid, fct):
     """
-    Return an irregular grid needed to reach a
-    given precision when integrating over each pixels.
+    Estimate the integration error on each intervals
+    of the grid using 1rst order Romberg integration.
 
-    Parameters (all optional)
+    Parameters
+    ----------
+    grid: 1d array [float]
+        Grid for integration. Each sections of this grid are treated
+        as separate integrals. So if grid has length N; N-1 integrals are
+        tested.
+    fct: callable
+        Function to be integrated.
+
+    Returns
+    -------
+    err, rel_err: error and relative error of each integrations, with length = length(grid) - 1
+    """
+    # Initialize some variables.
+    n_intervals = len(grid) - 1
+
+    # Change the 1D grid into a 2D set of intervals.
+    intervals = np.array([grid[:-1], grid[1:]])
+    intrange = np.diff(grid)
+
+    # Estimate of trapezoidal integration without subdivision.
+    numtraps = 1
+    ordsum = _difftrap(fct, intervals, numtraps)
+    trpz = intrange * ordsum / numtraps
+
+    # Estimate with intervals subdivided in 2
+    numtraps = 2
+    ordsum += _difftrap(fct, intervals, numtraps)
+    trpz_sub = intrange * ordsum / numtraps
+
+    # Compute better estimate of the integral
+    # using Romberg R(1, 0)
+    romb = _romberg_diff(trpz, trpz_sub, 1)
+
+    # Compute errors
+    err = np.abs(romb - trpz)
+    non_zero = (romb != 0)
+    rel_err = np.full_like(err, np.inf)
+    rel_err[non_zero] = np.abs(err[non_zero] / romb[non_zero])
+
+    return err, rel_err
+
+
+def adapt_grid(grid, fct, max_iter=10, rtol=10e-6, tol=0.0):
+    """
+    Return an irregular oversampled grid needed to reach a
+    given precision when integrating over each intervals of `grid`.
+    The grid is built by subdividing iteratively each intervals that
+    did not reach the required precision.
+    The precision is computed based on the estimate of the integrals
+    using a first order Romberg integration.
+
+    Parameters
     ----------
     grid: array
         Grid for integration. Each sections of this grid are treated
@@ -682,51 +734,49 @@ def adapt_grid(grid, fct, n_max=32, rtol=10e-6, **kwargs):
         optimized.
     fct: callable
         Function to be integrated. Must be a function of `grid`
-    n_max: int (n_max > 0)
-        Dictates the smallest subdivison of the grid given by delat_grid/n_max.
-        Needs to be greater then zero.
-    rtol: float
+    max_iter: int, optional
+        Number of times the intervals can be subdivided. The smallest
+        subdivison of the grid if max_iter is reached will then be given
+        by delta_grid / 2^max_iter. Needs to be greater then zero.
+        Default is 10.
+    rtol: float, optional
         The desired relative tolerance. Default is 10e-6, so 10 ppm.
-
-    kwargs (other arguments passed to the function get_n_nodes)
-    ------
     tol : float, optional
-        The desired absolute and relative tolerances. Default is 0.
-    divmax : int, optional
-        Maximum order of extrapolation. Default is 10.
+        The desired absolute tolerance. Default is 0 to priorise `rtol`.
 
     Returns
     -------
     os_grid  : 1D array
         Oversampled grid which minimizes the integration error based on
         Romberg's method
+
     See Also
     --------
-    utils.get_n_nodes
     scipy.integrate.quadrature.romberg
     References
     ----------
     [1] 'Romberg's method' https://en.wikipedia.org/wiki/Romberg%27s_method
 
     """
-    # Number of nodes less or equal to 2^(n_iteration)
-    n_iter = np.log2(n_max)
-    n_iter = int(np.ceil(n_iter))
-    for i_os in range(2, n_iter):
-        # Find number of nodes to reach the precision
-        n_nodes, _ = get_n_nodes(grid, fct, rtol=rtol, **kwargs)
+    # Iterate until precision is reached of max_iter
+    for _ in range(max_iter):
+
+        # Estimate error using Romberg integration
+        err, rel_err = estim_integration_err(grid, fct)
+
+        # Check where precision is reached
+        converged = (err < tol) | (rel_err < rtol)
 
         # Check if an oversampling is necessary
-        if (n_nodes == 2).all():
+        if converged.all():
             break
 
-        # Make sure n_nodes is not greater than user's define `n_max`.
-        # Also, it should not be less than 2, the minimal
-        # number of nodes to do an integration.
-        n_nodes = np.clip(n_nodes, 2, 3)
+        # Intervals that didn't reach the precision will be subdivided
+        n_oversample = np.full(err.shape, 2)
+        # No subdivision for the converged ones
+        n_oversample[converged] = 1
 
-        # Generate oversampled grid
-        n_oversample = n_nodes - 1
+        # Generate oversampled grid (subdivide)
         grid = oversample_grid(grid, n_os=n_oversample)
 
         # Return sorted and unique.
