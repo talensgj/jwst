@@ -687,8 +687,6 @@ def estim_integration_err(grid, fct):
     -------
     err, rel_err: error and relative error of each integrations, with length = length(grid) - 1
     """
-    # Initialize some variables.
-    n_intervals = len(grid) - 1
 
     # Change the 1D grid into a 2D set of intervals.
     intervals = np.array([grid[:-1], grid[1:]])
@@ -717,7 +715,7 @@ def estim_integration_err(grid, fct):
     return err, rel_err
 
 
-def adapt_grid(grid, fct, max_iter=10, rtol=10e-6, tol=0.0):
+def adapt_grid(grid, fct, max_iter=10, rtol=10e-6, tol=0.0, max_grid_size=None):
     """
     Return an irregular oversampled grid needed to reach a
     given precision when integrating over each intervals of `grid`.
@@ -741,15 +739,17 @@ def adapt_grid(grid, fct, max_iter=10, rtol=10e-6, tol=0.0):
         Default is 10.
     rtol: float, optional
         The desired relative tolerance. Default is 10e-6, so 10 ppm.
-    tol : float, optional
-        The desired absolute tolerance. Default is 0 to priorise `rtol`.
-
+    tol: float, optional
+        The desired absolute tolerance. Default is 0 to prioritize `rtol`.
+    max_grid_size: int, optional
+        maximum size of the output grid. Default is None, so no constraint.
     Returns
     -------
     os_grid  : 1D array
         Oversampled grid which minimizes the integration error based on
         Romberg's method
-
+    convergence_flag: bool
+        Whether the estimated tolerance was reach everywhere or not.
     See Also
     --------
     scipy.integrate.quadrature.romberg
@@ -758,6 +758,13 @@ def adapt_grid(grid, fct, max_iter=10, rtol=10e-6, tol=0.0):
     [1] 'Romberg's method' https://en.wikipedia.org/wiki/Romberg%27s_method
 
     """
+    # No limit of max_grid_size not given
+    if max_grid_size is None:
+        max_grid_size = np.inf
+
+    # Init some flags
+    max_size_reached = False
+
     # Iterate until precision is reached of max_iter
     for _ in range(max_iter):
 
@@ -766,25 +773,43 @@ def adapt_grid(grid, fct, max_iter=10, rtol=10e-6, tol=0.0):
 
         # Check where precision is reached
         converged = (err < tol) | (rel_err < rtol)
+        is_converged = converged.all()
 
-        # Check if an oversampling is necessary
-        if converged.all():
+        # Check if max grid size was reached
+        if max_size_reached or is_converged:
+            # Then stop iteration
             break
 
         # Intervals that didn't reach the precision will be subdivided
-        n_oversample = np.full(err.shape, 2)
+        n_oversample = np.full(err.shape, 2, dtype=int)
         # No subdivision for the converged ones
         n_oversample[converged] = 1
+
+        # Check if the maximum size will be reached.
+        # If so, prioritize the intervals with the largest estimated errors
+        # to reach the maximum size
+        os_grid_size = n_oversample.sum()
+        if os_grid_size > max_grid_size:
+            # How many nodes can be added to reach max?
+            n_nodes_remaining = max_grid_size - grid.size
+
+            # Find the position of the nodes with the largest error
+            idx_largest_err = np.argsort(rel_err)[-n_nodes_remaining:]
+
+            # Build new oversample array and assign only largest errors
+            n_oversample = np.ones(err.shape, dtype=int)
+            n_oversample[idx_largest_err] = 2
+
+            # Flag to stop iterations
+            max_size_reached = True
 
         # Generate oversampled grid (subdivide)
         grid = oversample_grid(grid, n_os=n_oversample)
 
-        # Return sorted and unique.
+        # Make sure sorted and unique.
         grid = np.unique(grid)
-    else:
-        print('DID NOT REACH THRESHOLD')
 
-    return grid
+    return grid, is_converged
 
 
 # ==============================================================================
