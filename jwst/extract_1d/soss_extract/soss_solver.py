@@ -217,13 +217,13 @@ def solve_transform(scidata_bkg, scimask, xref_o1, yref_o1, xref_o2, yref_o2,
     """
 
     # Remove any NaNs used to pad the xref, yref coordinates.
-    mask = np.isfinite(xref_o1) & np.isfinite(yref_o1)
-    xref_o1 = xref_o1[mask]
-    yref_o1 = yref_o1[mask]
+    mask_o1 = np.isfinite(xref_o1) & np.isfinite(yref_o1)
+    xref_o1 = xref_o1[mask_o1]
+    yref_o1 = yref_o1[mask_o1]
 
-    mask = np.isfinite(xref_o2) & np.isfinite(yref_o2)
-    xref_o2 = xref_o2[mask]
-    yref_o2 = yref_o2[mask]
+    mask_o2 = np.isfinite(xref_o2) & np.isfinite(yref_o2)
+    xref_o2 = xref_o2[mask_o2]
+    yref_o2 = yref_o2[mask_o2]
 
     # Get centroids from data.
     aper_mask_o1 = aperture_mask(xref_o1, yref_o1, halfwidth, scidata_bkg.shape)

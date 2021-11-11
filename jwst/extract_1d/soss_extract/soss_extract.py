@@ -198,7 +198,7 @@ def model_image(scidata_bkg, scierr, scimask, refmask, ref_files, transform=None
     :rtype: TODO TBD
     """
 
-    # Some error values are 0, we need to mask those pixels for the ectraction engine.
+    # Some error values are 0, we need to mask those pixels for the extraction engine.
     scimask = scimask | ~(scierr > 0)
 
     # TODO add 1/f correction?

@@ -41,9 +41,9 @@ def _plot_centroid(image, xtrace, ytrace):
                aspect=aspect)
     plt.plot(xtrace, ytrace, lw=2, ls='--', c='black', label='Centroids')
 
-    plt.xlabel('Spectral Pixel', fontsize=14)
-    plt.ylabel('Spatial Pixel', fontsize=14)
-    plt.legend(fontsize=14)
+    plt.xlabel('Spectral Pixel', fontsize=24)
+    plt.ylabel('Spatial Pixel', fontsize=24)
+    plt.legend(fontsize=24)
 
     plt.xlim(-0.5, ncols - 0.5)
     plt.ylim(-0.5, nrows - 0.5)
@@ -150,11 +150,12 @@ def get_centroids_com(scidata_bkg, header=None, mask=None, poly_order=11,
 
         ycom = center_of_mass(scidata_norm[:, icol], ytrace[icol], halfwidth)
 
-        # If NaN was returned we are done.
-        if not np.isfinite(ycom):
+        # If NaN was returned or centroid is out of bounds, we are done.
+        if not np.isfinite(ycom) or (ycom > (ynative - 1) * yos) or (ycom < 0):
             ytrace[icol] = np.nan
             continue
 
+        # TODO - given the mask, not sure that this is entirely necessary
         # If the pixel at the centroid is below the local mean we are likely
         # mid-way between orders and we should shift the window downward to
         # get a reliable centroid for order 1.
@@ -164,7 +165,7 @@ def get_centroids_com(scidata_bkg, header=None, mask=None, poly_order=11,
         if scidata_norm[irow, icol] < np.nanmean(scidata_norm[miny:maxy, icol]):
             ycom = center_of_mass(scidata_norm[:, icol], ycom - halfwidth, halfwidth)
 
-        # If NaN was returned or the position is too close to the array edge, use NaN.
+        # If the updated position is too close to the array edge, use NaN.
         if not np.isfinite(ycom) or (ycom <= 5 * yos) or (ycom >= (ynative - 6) * yos):
             ytrace[icol] = np.nan
             continue
