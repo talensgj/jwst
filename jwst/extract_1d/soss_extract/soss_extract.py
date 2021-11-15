@@ -341,7 +341,7 @@ def extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files,
         'model' option uses `tracemodels` to replace the bad pixels.
     Returns
     -------
-    wavelengths, fluxes, fluxerrs, npixels
+    wavelengths, fluxes, fluxerrs, npixels, box_weights
     Each is a dictionary with each extracted orders as key.
     """
     # Which orders to extract.
@@ -360,6 +360,7 @@ def extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files,
     fluxes = dict()
     fluxerrs = dict()
     npixels = dict()
+    box_weights = dict()
 
     log.info('Performing the de-contaminated box-extraction.')
 
@@ -368,17 +369,17 @@ def extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files,
         # Order string-name is used more often than integer-name
         order = order_str[order_integer]
 
-        log.info(f'Extracting {order}.')
+        log.debug(f'Extracting {order}.')
 
         # Define the box aperture
         xtrace, ytrace, wavelengths[order] = get_trace_1d(ref_files, transform, order_integer)
-        box_weights = get_box_weights(ytrace, width, scidata_bkg.shape, cols=xtrace)
+        box_w_ord = get_box_weights(ytrace, width, scidata_bkg.shape, cols=xtrace)
 
         # Decontaminate using all other modeled orders
         decont = scidata_bkg
         for mod_order in mod_order_list:
             if mod_order != order:
-                log.info(f'Decontaminating {order} from {mod_order} using model.')
+                log.debug(f'Decontaminating {order} from {mod_order} using model.')
                 decont = decont - tracemodels[mod_order]
 
         # TODO Add the option 'interpolate' to bad pixel handling.
@@ -391,11 +392,11 @@ def extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files,
                 # Update the mask for the modeled order, so all the pixels are usable.
                 scimask_ord = np.zeros_like(scimask)
 
-                log.info(f'Bad pixels in {order} are replaced with trace model.')
+                log.debug(f'Bad pixels in {order} are replaced with trace model.')
 
                 # Replace error estimate of the bad pixels using other valid pixels of similar value.
                 # The pixel to be estimate are the masked pixels in the region of extraction
-                extraction_region = (box_weights > 0)
+                extraction_region = (box_w_ord > 0)
                 pix_to_estim = (extraction_region & scimask)
                 # Use only valid pixels (not masked) in the extraction region for the empirical estimation
                 valid_pix = (extraction_region & ~scimask)
@@ -405,21 +406,23 @@ def extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files,
                 # Keep same mask and error
                 scimask_ord = scimask
                 scierr_ord = scierr
-                log.info(f'Bad pixels in {order} will be masked: trace model unavailable.')
+                log.warning(f'Bad pixels in {order} will be masked instead of modeled: trace model unavailable.')
         else:
             # Mask pixels
             scimask_ord = scimask
-            log.info(f'Bad pixels in {order} will be masked.')
+            log.debug(f'Bad pixels in {order} will be masked.')
 
-        # TODO May need to update scierr as well if it has bad pixels equivalent
-        out = box_extract(decont, scierr_ord, scimask_ord, box_weights, cols=xtrace)
+        # Save box weights
+        box_weights[order] = box_w_ord
+        # Perform the box extraction and save
+        out = box_extract(decont, scierr_ord, scimask_ord, box_w_ord, cols=xtrace)
         _, fluxes[order], fluxerrs[order], npixels[order] = out
 
     # TODO temporary debug plot.
     if devname is not None:
         devtools.plot_1d_spectra(wavelengths, fluxes, fluxerrs, npixels, devname)
 
-    return wavelengths, fluxes, fluxerrs, npixels
+    return wavelengths, fluxes, fluxerrs, npixels, box_weights
 
 
 def run_extract1d(input_model: DataModel,
@@ -469,7 +472,17 @@ def run_extract1d(input_model: DataModel,
     ref_files['specprofile'] = specprofile_ref
     ref_files['speckernel'] = speckernel_ref
 
-    # TODO: Do we need to handle ImageModel for SOSS? or just DataModel?
+    # Initialize the output model and output references (model of the detector and box aperture weights).
+    output_model = datamodels.MultiSpecModel()  # TODO is this correct for CubeModel input?
+    output_model.update(input_model)  # Copy meta data from input to output.
+
+    output_references = datamodels.SossExtractModel()
+    output_references.update(input_model)
+
+    all_tracemodels = dict()
+    all_box_weights = dict()
+
+    # Extract depending on the type of datamodels (Image or Cube)
     if isinstance(input_model, datamodels.ImageModel):
 
         log.info('Input is an ImageModel, processing a single integration.')
@@ -502,6 +515,12 @@ def run_extract1d(input_model: DataModel,
             tracemodels = dict()
             # TODO: Should the tikfac (and other) kwargs be explicitely adapted here?
 
+        # Save trace models for output reference
+        for order in tracemodels:
+            # Save as a list (convert to array at the end)
+            all_tracemodels[order] = [tracemodels[order]]
+            print(order, np.array(all_tracemodels[order]).shape)
+
         # Use the trace models to perform a de-contaminated extraction.
         kwargs = dict()
         kwargs['width'] = soss_kwargs['width']
@@ -509,11 +528,13 @@ def run_extract1d(input_model: DataModel,
         kwargs['bad_pix'] = soss_kwargs['bad_pix']
 
         result = extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files, soss_kwargs['transform'], subarray, **kwargs)
-        wavelengths, fluxes, fluxerrs, npixels = result
+        wavelengths, fluxes, fluxerrs, npixels, box_weights = result
 
-        # Initialize the output model.
-        output_model = datamodels.MultiSpecModel()  # TODO is this correct for ImageModel input?
-        output_model.update(input_model)  # Copy meta data from input to output.
+        # Save box weights for output reference
+        for order in box_weights:
+            # Save as a list (convert to array at the end)
+            all_box_weights[order] = [box_weights[order]]
+            print('Box weights', order, np.array(all_box_weights[order]).shape)
 
         # Copy spectral data for each order into the output model.
         # TODO how to include parameters like transform and tikfac in the output.
@@ -533,7 +554,6 @@ def run_extract1d(input_model: DataModel,
 
             # Add integration number and spectral order
             spec.spectral_order = order_str_2_int[order]
-            spec.int_num = i + 1  # integration number starts at 1, not 0 like python
 
             output_model.spec.append(spec)
 
@@ -545,10 +565,6 @@ def run_extract1d(input_model: DataModel,
 
         # Build deepstack out of max N images TODO OPTIONAL.
         # TODO making a deepstack could be used to get a more robust transform and tikfac, 1/f.
-
-        # Initialize the output model.
-        output_model = datamodels.MultiSpecModel()  # TODO is this correct for CubeModel input?
-        output_model.update(input_model)  # Copy meta data from input to output.
 
         # Loop over images.
         for i in range(nimages):
@@ -588,6 +604,15 @@ def run_extract1d(input_model: DataModel,
                 #    model_image returns: tracemodels, transform, tikfac, logl
                 soss_kwargs['transform'] = [0,0,0]
 
+            # Save trace models for output reference
+            for order in tracemodels:
+                # Initialize a list for first integration
+                if i == 0:
+                    all_tracemodels[order] = []
+                all_tracemodels[order].append(tracemodels[order])
+                print(order, np.array(all_tracemodels[order]).shape)
+
+
             # Use the trace models to perform a de-contaminated extraction.
             kwargs = dict()
             kwargs['width'] = soss_kwargs['width']
@@ -595,7 +620,15 @@ def run_extract1d(input_model: DataModel,
             kwargs['bad_pix'] = soss_kwargs['bad_pix']
 
             result = extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files, soss_kwargs['transform'], subarray, **kwargs)
-            wavelengths, fluxes, fluxerrs, npixels = result
+            wavelengths, fluxes, fluxerrs, npixels, box_weights = result
+
+            # Save box weights for output reference
+            for order in box_weights:
+                # Initialize a list for first integration
+                if i == 0:
+                    all_box_weights[order] = []
+                all_box_weights[order].append(box_weights[order])
+                print('Box weights', order, np.array(all_box_weights[order]).shape)
 
             # Copy spectral data for each order into the output model.
             # TODO how to include parameters like transform and tikfac in the output.
@@ -623,4 +656,19 @@ def run_extract1d(input_model: DataModel,
         msg = "Only ImageModel and CubeModel are implemented for the NIRISS SOSS extraction."
         raise ValueError(msg)
 
-    return output_model
+    # Save output references
+    for order in all_tracemodels:
+        # Convert from list to array
+        tracemod_ord = np.array(all_tracemodels[order])
+        # Save
+        order_int = order_str_2_int[order]
+        setattr(output_references, f'order{order_int}', tracemod_ord)
+
+    for order in all_box_weights:
+        # Convert from list to array
+        box_w_ord = np.array(all_box_weights[order])
+        # Save
+        order_int = order_str_2_int[order]
+        setattr(output_references, f'aperture{order_int}', box_w_ord)
+
+    return output_model, output_references
