@@ -528,7 +528,7 @@ def run_extract1d(input_model: DataModel,
         kwargs['bad_pix'] = soss_kwargs['bad_pix']
 
         result = extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files, soss_kwargs['transform'], subarray, **kwargs)
-        wavelengths, fluxes, fluxerrs, npixels = result
+        wavelengths, fluxes, fluxerrs, npixels, box_weights = result
 
         # Save box weights for output reference
         for order in box_weights:
@@ -620,7 +620,7 @@ def run_extract1d(input_model: DataModel,
             kwargs['bad_pix'] = soss_kwargs['bad_pix']
 
             result = extract_image(scidata_bkg, scierr, scimask, tracemodels, ref_files, soss_kwargs['transform'], subarray, **kwargs)
-            wavelengths, fluxes, fluxerrs, npixels = result
+            wavelengths, fluxes, fluxerrs, npixels, box_weights = result
 
             # Save box weights for output reference
             for order in box_weights:
