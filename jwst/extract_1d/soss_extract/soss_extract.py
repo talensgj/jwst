@@ -12,7 +12,7 @@ from astropy.nddata.bitmask import bitfield_to_boolean_mask
 from .soss_syscor import make_background_mask, soss_background
 from .soss_solver import solve_transform, transform_wavemap, transform_profile, transform_coords
 from .atoca import ExtractionEngine
-from .atoca_utils import ThroughputSOSS, WebbKernel, grid_from_map
+from .atoca_utils import ThroughputSOSS, WebbKernel, grid_from_map, mask_bad_dispersion_direction
 from .soss_boxextract import get_box_weights, box_extract, estim_error_nearest_data
 
 # TODO remove once code is sufficiently tested.
@@ -46,6 +46,20 @@ def get_ref_file_args(ref_files, transform):
     wavemap_o1 = transform_wavemap(transform, wavemap_ref.map[0].data, ovs, pad)
     wavemap_o2 = transform_wavemap(transform, wavemap_ref.map[1].data, ovs, pad)
 
+    # Make sure all pixels follow the expected direction of the dispersion
+    # Here, the dispersion axis is given by the columns (dispersion_axis=1)
+    # and it is decreasing going from left to right (dwv_sign=-1)
+    kwargs = dict(dispersion_axis=1, dwv_sign=-1)
+    wavemap_o1, flag_o1 = mask_bad_dispersion_direction(wavemap_o1, **kwargs)
+    wavemap_o2, flag_o2 = mask_bad_dispersion_direction(wavemap_o2, **kwargs)
+
+    # Warn if not all pixels were corrected
+    msg_warning = 'Some pixels in order {} do not follow the expected dispersion axis'
+    if not flag_o1:
+        log.warning(msg_warning.format(1))
+    if not flag_o2:
+        log.warning(msg_warning.format(2))
+
     # The spectral profiles for order 1 and 2.
     specprofile_ref = ref_files['specprofile']
     ovs = specprofile_ref.profile[0].oversampling
@@ -66,16 +80,32 @@ def get_ref_file_args(ref_files, transform):
     ovs = speckernel_ref.meta.spectral_oversampling
     n_pix = 2*speckernel_ref.meta.halfwidth + 1
 
-    # TODO This temporary fix may be removed eventually or put somewhere else?
+    # Take the centroid of each trace as a grid to project the WebbKernel
+    # WebbKer needs a 2d input, so artificially add axis
+    wave_maps = [wavemap_o1, wavemap_o2]
+    centroid = dict()
+    for wv_map, order in zip(wave_maps, [1, 2]):
+        # Needs the same number of columns as the detector. Put zeros where not define.
+        wv_cent = np.zeros((1, wv_map.shape[1]))
+        # Get central wavelength as a function of columns
+        col, _, wv = get_trace_1d(ref_files, transform, order)
+        wv_cent[:, col] = wv
+        # Set invalid values to zero
+        idx_invalid = ~np.isfinite(wv_cent)
+        wv_cent[idx_invalid] = 0.0
+        centroid[order] = wv_cent
+
+    # Get kernels
+    kernels_o1 = WebbKernel(speckernel_ref.wavelengths, speckernel_ref.kernels, centroid[1], ovs, n_pix)
+    kernels_o2 = WebbKernel(speckernel_ref.wavelengths, speckernel_ref.kernels, centroid[2], ovs, n_pix)
+
+    # TODO This temporary fix may be removed eventually or put somewhere else, or deal with in WebbKernel?
     # Temporary fix to make sure that the kernels can cover the wavelength maps
     speckernel_wv_range = [np.min(speckernel_ref.wavelengths), np.max(speckernel_ref.wavelengths)]
     valid_wavemap = (speckernel_wv_range[0] <= wavemap_o1) & (wavemap_o1 <= speckernel_wv_range[1])
     wavemap_o1 = np.where(valid_wavemap, wavemap_o1, 0.)
     valid_wavemap = (speckernel_wv_range[0] <= wavemap_o2) & (wavemap_o2 <= speckernel_wv_range[1])
     wavemap_o2 = np.where(valid_wavemap, wavemap_o2, 0.)
-    
-    kernels_o1 = WebbKernel(speckernel_ref.wavelengths, speckernel_ref.kernels, wavemap_o1, ovs, n_pix)
-    kernels_o2 = WebbKernel(speckernel_ref.wavelengths, speckernel_ref.kernels, wavemap_o2, ovs, n_pix)
 
     return [wavemap_o1, wavemap_o2], [specprofile_o1, specprofile_o2], [throughput_o1, throughput_o2], [kernels_o1, kernels_o2]
 
@@ -231,9 +261,11 @@ def model_image(scidata_bkg, scierr, scimask, refmask, ref_files, transform=None
     # Prepare the reference file arguments.
     ref_file_args = get_ref_file_args(ref_files, transform)
 
+    # Set the c_kwargs using the minimum value of the kernels
+    c_kwargs = [{'thresh': webb_ker.min_value} for webb_ker in ref_file_args[3]]
+
     # Initialize the Engine.
-    # TODO set c_kwargs?
-    engine = ExtractionEngine(*ref_file_args, n_os=n_os, threshold=threshold)
+    engine = ExtractionEngine(*ref_file_args, n_os=n_os, threshold=threshold, c_kwargs=c_kwargs)
 
     if tikfac is None:
 
@@ -246,13 +278,13 @@ def model_image(scidata_bkg, scierr, scimask, refmask, ref_files, transform=None
         # Initial pass 8 orders of magnitude with 10 grid points.
         factors = engine.estimate_tikho_factors(estimate, log_range=[-4, 4], n_points=10)
         tiktests = engine.get_tikho_tests(factors, data=scidata_bkg, error=scierr, mask=scimask)
-        tikfac, _, _ = engine.best_tikho_factor(tests=tiktests)
+        tikfac, mode, _ = engine.best_tikho_factor(tests=tiktests, fit_mode='chi2')
 
         # Refine across 4 orders of magnitude.
         tikfac = np.log10(tikfac)
         factors = np.logspace(tikfac - 2, tikfac + 2, 20)
         tiktests = engine.get_tikho_tests(factors, data=scidata_bkg, error=scierr, mask=scimask)
-        tikfac, _, _ = engine.best_tikho_factor(tests=tiktests)
+        tikfac, mode, _ = engine.best_tikho_factor(tests=tiktests, fit_mode=mode)
 
     log.info('Using a Tikhonov factor of {}'.format(tikfac))
 
