@@ -554,7 +554,6 @@ def run_extract1d(input_model: DataModel,
         for order in tracemodels:
             # Save as a list (convert to array at the end)
             all_tracemodels[order] = [tracemodels[order]]
-            print(order, np.array(all_tracemodels[order]).shape)
 
         # Use the trace models to perform a de-contaminated extraction.
         kwargs = dict()
@@ -569,7 +568,6 @@ def run_extract1d(input_model: DataModel,
         for order in box_weights:
             # Save as a list (convert to array at the end)
             all_box_weights[order] = [box_weights[order]]
-            print('Box weights', order, np.array(all_box_weights[order]).shape)
 
         # Copy spectral data for each order into the output model.
         # TODO how to include parameters like transform and tikfac in the output.
@@ -648,8 +646,6 @@ def run_extract1d(input_model: DataModel,
                 if i == 0:
                     all_tracemodels[order] = []
                 all_tracemodels[order].append(tracemodels[order])
-                print(order, np.array(all_tracemodels[order]).shape)
-
 
             # Use the trace models to perform a de-contaminated extraction.
             kwargs = dict()
@@ -666,7 +662,6 @@ def run_extract1d(input_model: DataModel,
                 if i == 0:
                     all_box_weights[order] = []
                 all_box_weights[order].append(box_weights[order])
-                print('Box weights', order, np.array(all_box_weights[order]).shape)
 
             # Copy spectral data for each order into the output model.
             # TODO how to include parameters like transform and tikfac in the output.
