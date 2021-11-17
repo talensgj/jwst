@@ -792,6 +792,74 @@ def get_n_nodes(grid, fct, divmax=10, tol=1.48e-4, rtol=1.48e-4):
     return n_grid, residual
 
 
+def adapt_grid(grid, fct, n_max=32, rtol=10e-6, **kwargs):
+    """
+    Return an irregular grid needed to reach a
+    given precision when integrating over each pixels.
+
+    Parameters (all optional)
+    ----------
+    grid: array
+        Grid for integration. Each sections of this grid are treated
+        as separate integrals. So if grid has length N; N-1 integrals are
+        optimized.
+    fct: callable
+        Function to be integrated. Must be a function of `grid`
+    n_max: int (n_max > 0)
+        Dictates the smallest subdivison of the grid given by delat_grid/n_max.
+        Needs to be greater then zero.
+    rtol: float
+        The desired relative tolerance. Default is 10e-6, so 10 ppm.
+
+    kwargs (other arguments passed to the function get_n_nodes)
+    ------
+    tol : float, optional
+        The desired absolute and relative tolerances. Default is 0.
+    divmax : int, optional
+        Maximum order of extrapolation. Default is 10.
+
+    Returns
+    -------
+    os_grid  : 1D array
+        Oversampled grid which minimizes the integration error based on
+        Romberg's method
+    See Also
+    --------
+    utils.get_n_nodes
+    scipy.integrate.quadrature.romberg
+    References
+    ----------
+    [1] 'Romberg's method' https://en.wikipedia.org/wiki/Romberg%27s_method
+
+    """
+    # Number of nodes less or equal to 2^(n_iteration)
+    n_iter = np.log2(n_max)
+    n_iter = int(np.ceil(n_iter))
+    for i_os in range(2, n_iter):
+        # Find number of nodes to reach the precision
+        n_nodes, _ = get_n_nodes(grid, fct, rtol=rtol, **kwargs)
+
+        # Check if an oversampling is necessary
+        if (n_nodes == 2).all():
+            break
+
+        # Make sure n_nodes is not greater than user's define `n_max`.
+        # Also, it should not be less than 2, the minimal
+        # number of nodes to do an integration.
+        n_nodes = np.clip(n_nodes, 2, 3)
+
+        # Generate oversampled grid
+        n_oversample = n_nodes - 1
+        grid = oversample_grid(grid, n_os=n_oversample)
+
+        # Return sorted and unique.
+        grid = np.unique(grid)
+    else:
+        print('DID NOT REACH THRESHOLD')
+
+    return grid
+
+
 # ==============================================================================
 # Code for handling the throughput and kernels.
 # ==============================================================================
