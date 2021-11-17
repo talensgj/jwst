@@ -204,17 +204,19 @@ def estim_flux_first_order(scidata_bkg, scierr, scimask, ref_files, threshold):
 
 
 def _mask_wv_map_centroid_outside(wave_maps, ref_files, transform, y_max, orders=(1, 2)):
-
+    """ Patch to mask wv_map when centroid outside"""
     for wv_map, order in zip(wave_maps, orders):
         # Get centroid wavelength and y position as a function of columns
         _, y_pos, wv = get_trace_1d(ref_files, transform, order)
         # Find min and max wavelengths with centroid inside of detector
+        wv = wv[np.isfinite(y_pos)]
+        y_pos = y_pos[np.isfinite(y_pos)]
         idx_inside = (0 <= y_pos) & (y_pos <= y_max)
         wv = wv[idx_inside]
         # Set to zeros (mask) values outside
-        is_pix_outside = (np.min(wv) > wv_map) | (wv_map > np.max(wv))
-        is_pix_outside &= np.isfinite(wv_map)
-        wv_map[is_pix_outside] = 0.
+        mask = np.isfinite(wv_map)
+        mask[mask] = (np.min(wv) > wv_map[mask]) | (wv_map[mask] > np.max(wv))
+        wv_map[mask] = 0.
 
 
 def model_image(scidata_bkg, scierr, scimask, refmask, ref_files, transform=None,
