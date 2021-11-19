@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import logging
 
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import shift, rotate
 from scipy.optimize import minimize
@@ -11,8 +9,8 @@ import warnings
 from .soss_syscor import aperture_mask
 from .soss_centroids import get_centroids_com
 
-log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+import matplotlib.pyplot as plt
+
 
 def transform_coords(angle, xshift, yshift, xpix, ypix, cenx=1024, ceny=50):
     """Apply a rotation and shift to the trace centroids positions. This
@@ -130,64 +128,14 @@ def _chi_squared(transform, xref_o1, yref_o1, xref_o2, yref_o2,
         The chi-squared value of the model fit.
     """
 
-    # Interpolate rotated model of first order onto same x scale as data.
+    # Interpolate rotated model onto same x scale as data.
     ymod_o1 = evaluate_model(xdat_o1, transform, xref_o1, yref_o1)
+    ymod_o2 = evaluate_model(xdat_o2, transform, xref_o2, yref_o2)
 
     # Compute the chi-square.
     chisq_o1 = np.nansum((ydat_o1 - ymod_o1)**2)
-
-    # If second order centroids are provided, include them in the calculation.
-    if xdat_o2 is not None:
-        # Interpolate rotated model onto same x scale as data.
-        ymod_o2 = evaluate_model(xdat_o2, transform, xref_o2, yref_o2)
-
-        # Compute the chi-square and add to the first order.
-        chisq_o2 = np.nansum((ydat_o2 - ymod_o2)**2)
-        chisq = chisq_o1 + chisq_o2
-    # If not, use only the first order.
-    else:
-        chisq = chisq_o1
-
-    return chisq
-
-
-def _chi_squared_rot(transform, xref_o1, yref_o1, xref_o2, yref_o2,
-                     xdat_o1, ydat_o1, xdat_o2, ydat_o2):
-    """Compute the chi-squared statistic for fitting the reference positions
-    to the true positions neglecting any vertical/horizontal offsets.
-
-    Parameters
-    ----------
-    transform : Tuple, List, Array
-        The transformation parameters.
-    xref_o1 : array[float]
-        The order 1 reference x-positions.
-    yref_o1 : array[float]
-        The order 1 reference y-positions.
-    xref_o2 : array[float]
-        The order 2 reference x-positions.
-    yref_o2 : array[float]
-        The order 2 reference y-positions.
-    xdat_o1 : array[float]
-        The order 1 data x-positions.
-    ydat_o1 : array[float]
-        The order 1 data y-positions.
-    xdat_o2 : array[float]
-        The order 2 data x-positions.
-    ydat_o2 : array[float]
-        The order 2 data y-positions.
-
-    Returns
-    -------
-    chisq : float
-        The chi-squared value of the model fit.
-    """
-
-    transform_ = np.zeros(3)
-    transform_[0] = transform
-
-    chisq = _chi_squared(transform_, xref_o1, yref_o1, xref_o2, yref_o2,
-                         xdat_o1, ydat_o1, xdat_o2, ydat_o2)
+    chisq_o2 = np.nansum((ydat_o2 - ymod_o2)**2)
+    chisq = chisq_o1 + chisq_o2
 
     return chisq
 
@@ -195,7 +143,7 @@ def _chi_squared_rot(transform, xref_o1, yref_o1, xref_o2, yref_o2,
 def _chi_squared_shift(transform, xref_o1, yref_o1, xref_o2, yref_o2,
                        xdat_o1, ydat_o1, xdat_o2, ydat_o2):
     """Compute the chi-squared statistic for fitting the reference positions
-    to the true positions neglecting any rotation.
+    to the true positions.
 
     Parameters
     ----------
@@ -233,14 +181,10 @@ def _chi_squared_shift(transform, xref_o1, yref_o1, xref_o2, yref_o2,
     return chisq
 
 
-def solve_transform(scidata_bkg, scimask, xref_o1, yref_o1, xref_o2=None,
-                    yref_o2=None, halfwidth=30., rotation=True, shift=True,
-                    soss_filter='CLEAR', bounds_theta=[-1., 1.],
-                    bounds_x=[-10., 10.], bounds_y=[-10., 10.],
-                    verbose=True):
+def solve_transform(scidata_bkg, scimask, xref_o1, yref_o1, xref_o2, yref_o2,
+                    halfwidth=30., rotation=True, verbose=False):
     """Given a science image, determine the centroids and find the simple
-    transformation (rotation + vertical & horizonal offset, or some combination
-    thereof) needed to match xref_o1 and yref_o1 to the image.
+    transformation needed to match xref_o1 and yref_o1 to the image.
 
     Parameters
     ----------
@@ -252,33 +196,16 @@ def solve_transform(scidata_bkg, scimask, xref_o1, yref_o1, xref_o2=None,
         A priori expectation of the order 1 trace x-positions.
     yref_o1 : array[float]
         A priori expectation of the order 1 trace y-positions.
-    xref_o2 : array[float] (optional)
-        A priori expectation of the order 2 trace x-positions. Providing these
-        will improve the accuracy of the solver.
-    yref_o2 : array[float] (optional)
-        A priori expectation of the order 2 trace y-positions. Providing these
-        will improve the accuracy of the solver.
+    xref_o2 : array[float]
+        A priori expectation of the order 2 trace x-positions.
+    yref_o2 : array[float]
+        A priori expectation of the order 2 trace y-positions.
     halfwidth : float (optional)
         Size of the aperture mask used when extracting the trace positions
         from the data.
     rotation : bool (optional)
-        If False, fix rotation angle to zero and only fit for horizontal and
+        If False, set rotation angle to zero and only fit horizontal and
         vertical offsets.
-    shift : bool (optional)
-        If False, fix horizontal and vertical offsets to zero and only fit for
-        rotation angle.
-    soss_filter : str (optional)
-        Designator for the SOSS filter used in the observation. Either CLEAR
-        or F277W. Setting F277W here will force shift to False.
-    bounds_theta : array[float] (optional)
-        Boundaries on the rotation angle to consider in the Chi-squared
-        minimization.
-    bounds_x : array[float] (optional)
-        Boundaries on the horizontal offset to consider in the Chi-squared
-        minimization.
-    bounds_y : array[float] (optional)
-        Boundaries on the vertical offset to consider in the Chi-squared
-        minimization.
     verbose : bool (optional)
         If True make a diagnostic image of the best-fit transformation.
 
@@ -289,205 +216,98 @@ def solve_transform(scidata_bkg, scimask, xref_o1, yref_o1, xref_o2=None,
         xref_o1 and yref_o1 to the image.
     """
 
-    # Start with order 1 centroids as they will be available for all subarrays.
     # Remove any NaNs used to pad the xref, yref coordinates.
     mask_o1 = np.isfinite(xref_o1) & np.isfinite(yref_o1)
     xref_o1 = xref_o1[mask_o1]
     yref_o1 = yref_o1[mask_o1]
 
+    mask_o2 = np.isfinite(xref_o2) & np.isfinite(yref_o2)
+    xref_o2 = xref_o2[mask_o2]
+    yref_o2 = yref_o2[mask_o2]
+
     # Get centroids from data.
     aper_mask_o1 = aperture_mask(xref_o1, yref_o1, halfwidth, scidata_bkg.shape)
     mask = aper_mask_o1 | scimask
-    xdat_o1, ydat_o1, _ = get_centroids_com(scidata_bkg, mask=mask,
-                                            poly_order=None)
+    xdat_o1, ydat_o1, _ = get_centroids_com(scidata_bkg, mask=mask, poly_order=None)
 
-    # If order 2 centroids are provided, include them in the analysis. The
-    # inclusion of the order 2 centroids will allow for a more accurate
-    # determination of the rotation and offset, as the addition of the second
-    # order provides an anchor in the spatial direction. However, there are
-    # instances (a SUBSTRIP96, or F277W observation for example) where the
-    # second order is not available. In this case, work only with order 1.
-    if xref_o2 is not None and yref_o2 is not None and (soss_filter == 'CLEAR' or soss_filter == 'FULL'):
-        # Remove any NaNs used to pad the xref, yref coordinates.
-        log.info('Measuring trace position for orders 1 and 2.')
-        mask_o2 = np.isfinite(xref_o2) & np.isfinite(yref_o2)
-        xref_o2 = xref_o2[mask_o2]
-        yref_o2 = yref_o2[mask_o2]
+    aper_mask_o2 = aperture_mask(xref_o2, yref_o2, halfwidth, scidata_bkg.shape)
+    mask = aper_mask_o2 | scimask
+    xdat_o2, ydat_o2, _ = get_centroids_com(scidata_bkg, mask=mask, poly_order=None)
 
-        # Get centroids from data.
-        aper_mask_o2 = aperture_mask(xref_o2, yref_o2, halfwidth, scidata_bkg.shape)
-        mask = aper_mask_o2 | scimask
-        xdat_o2, ydat_o2, _ = get_centroids_com(scidata_bkg, mask=mask,
-                                                poly_order=None)
+    # Use only the clean range between x=800 and x=1700.
+    mask = (xdat_o1 >= 800) & (xdat_o1 <= 1700)
+    xdat_o1 = xdat_o1[mask]
+    ydat_o1 = ydat_o1[mask]
 
-        # Use only the uncontaminated range between x=800 and x=1700.
-        mask = (xdat_o1 >= 800) & (xdat_o1 <= 1700)
-        xdat_o1 = xdat_o1[mask]
-        ydat_o1 = ydat_o1[mask]
+    mask = (xdat_o2 >= 800) & (xdat_o2 <= 1700)
+    xdat_o2 = xdat_o2[mask]
+    ydat_o2 = ydat_o2[mask]
 
-        mask = (xdat_o2 >= 800) & (xdat_o2 <= 1700)
-        xdat_o2 = xdat_o2[mask]
-        ydat_o2 = ydat_o2[mask]
-
-    elif soss_filter == 'F277W':
-        # If the exposure uses the F277W filter, there is no second order, and
-        # first order centroids are only useful redwards of ~2.5µm.
-        # Restrict centroids to lie within region lambda>~2.5µm, where the
-        # F277W filter response is strong.
-        log.info('Measuring trace position for order 1 spanning the F277W pixels.')
-        mask = (xdat_o1 >= 25) & (xdat_o1 <= 425)
-        xdat_o1 = xdat_o1[mask]
-        ydat_o1 = ydat_o1[mask]
-        # Force shift to False as there is not enough information to
-        # constrain dx, dy and dtheta simultaneously.
-        shift = False
-        # Second order centroids are not available.
-        xdat_o2, ydat_o2 = None, None
-
-    else:
-        # If the exposure is SUBSTRIP96 using the CLEAR filter, there is no
-        # order 2. Use the entire first order to enable the maximum possible
-        # positional constraint on the centroids.
-        log.info('Measuring trace position for order 1 only.')
-        xdat_o2, ydat_o2 = None, None
-
-    # Find the simple transformation via a Chi-squared minimzation of the
-    # extracted and reference centroids. This transformation considers by
-    # default rotation as well as vertical and horizontal offsets, however it
-    # can be limited to consider only rotation or only offsets.
-    if rotation is False:
-        # If not considering rotation.
-        # Set up the optimization problem.
-        guess_transform = np.array([0., 0.])
-        min_args = (xref_o1, yref_o1, xref_o2, yref_o2,
-                    xdat_o1, ydat_o1, xdat_o2, ydat_o2)
-
-        # Define the boundaries
-        bounds = [bounds_x, bounds_y]
-
-        # Find the best-fit transformation.
-        result = minimize(_chi_squared_shift, guess_transform, bounds=bounds,
-                          args=min_args)
-        simple_transform = np.zeros(3)
-        simple_transform[1:] = result.x
-
-    elif shift is False:
-        # If not considering horizontal or vertical shifts.
-        # Set up the optimization problem.
-        guess_transform = np.array([0.])
-        min_args = (xref_o1, yref_o1, xref_o2, yref_o2,
-                    xdat_o1, ydat_o1, xdat_o2, ydat_o2)
-
-        # Define the boundaries
-        bounds = [bounds_theta]
-
-        # Find the best-fit transformation.
-        result = minimize(_chi_squared_rot, guess_transform, bounds=bounds,
-                          args=min_args)
-
-        simple_transform = np.zeros(3)
-        simple_transform[0] = result.x
-
-    else:
-        # If considering the full transformation.
+    if rotation:
         # Set up the optimization problem.
         guess_transform = np.array([0., 0., 0.])
         min_args = (xref_o1, yref_o1, xref_o2, yref_o2,
                     xdat_o1, ydat_o1, xdat_o2, ydat_o2)
 
-        # Define the boundaries
-        bounds = [bounds_theta, bounds_x, bounds_y]
-
         # Find the best-fit transformation.
-        result = minimize(_chi_squared, guess_transform, bounds=bounds,
-                          args=min_args)
+        result = minimize(_chi_squared, guess_transform, args=min_args)
         simple_transform = result.x
 
+    else:
+        # Set up the optimization problem.
+        guess_transform = np.array([0., 0.])
+        min_args = (xref_o1, yref_o1, xref_o2, yref_o2,
+                    xdat_o1, ydat_o1, xdat_o2, ydat_o2)
+
+        # Find the best-fit transformation.
+        result = minimize(_chi_squared_shift, guess_transform, args=min_args)
+
+        simple_transform = np.zeros(3)
+        simple_transform[1:] = result.x
+
     if verbose:
-        _plot_transform(simple_transform, xdat_o1, ydat_o1, xdat_o2, ydat_o2,
-                        xref_o1, yref_o1, xref_o2, yref_o2)
 
-    return simple_transform
-
-
-def _plot_transform(simple_transform, xdat_o1, ydat_o1, xdat_o2, ydat_o2,
-                   xref_o1, yref_o1, xref_o2, yref_o2):
-    """Utility function to plot the results of solve_transform when in debug
-    mode.
-
-    Parameters
-    ----------
-    simple_transform : array[float]
-        Array containing the angle, x-shift and y-shift needed to match
-        xref_o1 and yref_o1 to the image.
-    xdat_o1 : array[float]
-        Order 1 X-centroids extracted from the data frame.
-    ydat_o1 : array[float]
-        Order 1 Y-centroids extracted from the data frame.
-    xdat_o2 : array[float]
-        Order 2 X-centroids extracted from the data frame.
-    ydat_o2 : array[float]
-        Order 2 Y-centroids extracted from the data frame.
-    xref_o1 : array[float]
-        Order 1 X-centroids from the reference file.
-    yref_o1 : array[float]
-        Order 1 Y-centroids from the reference file.
-    xref_o2 : array[float]
-        Order 2 X-centroids from the reference file.
-    yref_o2 : array[float]
-        Order 2 Y-centroids from the reference file.
-    """
-
-    # Calculate model positions for the first order.
-    ymod_o1 = evaluate_model(xdat_o1, simple_transform, xref_o1, yref_o1)
-
-    # Make a figure showing the extracted and best-fit trace positions.
-    plt.figure(figsize=(16, 5))
-
-    # Order 1 data and model
-    ax1 = plt.subplot(221)
-    ax1.plot(xdat_o1, ydat_o1, 'o')
-    ax1.plot(xdat_o1, ymod_o1)
-
-    ax1.set_ylabel('Y [pix]', fontsize=16)
-    ax1.tick_params(labelbottom=False)
-    ax1.tick_params(axis='both', which='major', labelsize=14)
-    ax1.set_title('Order 1', fontsize=20)
-
-    # Order 1 data - model
-    ax2 = plt.subplot(223, sharex=ax1)
-    ax2.plot(xdat_o1, ydat_o1 - ymod_o1, 'o')
-
-    ax2.set_ylim(-5, 5)
-    ax2.set_ylabel('O - C', fontsize=16)
-    ax2.set_xlabel('X [pix]', fontsize=16)
-    ax2.tick_params(axis='both', which='major', labelsize=14)
-
-    if xdat_o2 is not None:
-        # Calculate model positions for the second order.
+        # Calculate model positions.
+        ymod_o1 = evaluate_model(xdat_o1, simple_transform, xref_o1, yref_o1)
         ymod_o2 = evaluate_model(xdat_o2, simple_transform, xref_o2, yref_o2)
 
-        # Order 2 data and model
-        ax3 = plt.subplot(222, sharey=ax1)
-        ax3.plot(xdat_o2, ydat_o2, 'o')
-        ax3.plot(xdat_o2, ymod_o2)
+        # Make a figure showing the extracted and best-fit trace positions.
+        plt.figure(figsize=(16, 5))
 
-        ax3.tick_params(labelleft=False)
-        ax3.tick_params(labelbottom=False)
-        ax3.set_title('Order 2', fontsize=20)
+        ax = plt.subplot(221)
+        plt.plot(xdat_o1, ydat_o1, 'o')
+        plt.plot(xdat_o1, ymod_o1)
 
-        # Order 2 data - model
-        ax4 = plt.subplot(224, sharex=ax3, sharey=ax2)
-        ax4.plot(xdat_o2, ydat_o2 - ymod_o2, 'o')
+        plt.xlabel('X [pix]')
+        plt.ylabel('Y [pix]')
 
-        ax4.set_xlabel('X [pix]', fontsize=16)
-        ax4.tick_params(labelleft=False)
-        ax4.tick_params(axis='both', which='major', labelsize=14)
+        plt.subplot(223, sharex=ax)
+        plt.plot(xdat_o1, ydat_o1 - ymod_o1, 'o')
 
-    plt.tight_layout()
-    plt.show()
+        plt.ylim(-5, 5)
 
-    return
+        plt.xlabel('X [pix]')
+        plt.ylabel('O - C')
+
+        ax = plt.subplot(222)
+        plt.plot(xdat_o2, ydat_o2, 'o')
+        plt.plot(xdat_o2, ymod_o2)
+
+        plt.xlabel('X [pix]')
+        plt.ylabel('Y [pix]')
+
+        plt.subplot(224, sharex=ax)
+        plt.plot(xdat_o2, ydat_o2 - ymod_o2, 'o')
+
+        plt.ylim(-5, 5)
+
+        plt.xlabel('X [pix]')
+        plt.ylabel('O - C')
+
+        plt.tight_layout()
+        plt.show()
+
+    return simple_transform
 
 
 def rotate_image(image, angle, origin):
@@ -637,7 +457,7 @@ def transform_wavemap(simple_transform, wavemap, oversample, pad, native=True):
 
     # Set NaNs to zero to prevent errors when shifting/rotating.
     mask = np.isnan(wavemap)
-    wavemap = np.where(mask, 0., wavemap)
+    wavemap[mask] = 0.
 
     # Apply the transformation to the wavelength map.
     trans_wavemap = apply_transform(simple_transform, wavemap, oversample,
