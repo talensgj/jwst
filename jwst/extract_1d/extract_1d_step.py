@@ -88,7 +88,7 @@ class Extract1dStep(Step):
     """
 
     # TODO add SOSS reference file types.
-    reference_file_types = ['extract1d', 'apcorr', 'wavemap', 'spectrace', 'specprofile', 'speckernel']
+    reference_file_types = ['extract1d', 'apcorr']
 
     def process(self, input):
         """Execute the step.
@@ -142,43 +142,28 @@ class Extract1dStep(Step):
 
             self.log.info('Input is a NIRISS SOSS observation, the specialized SOSS extraction (ATOCA) will be used.')
 
-            # Set the filter configuration
-            if input_model.meta.instrument.filter == 'CLEAR':
-                self.log.info('Exposure is through the GR700XD + CLEAR (science).')
-                soss_filter = 'CLEAR'
-            elif input_model.meta.instrument.filter == 'F277W':
-                self.log.info('Exposure is through the GR700XD + F277W (calibration).')
-                soss_filter = 'F277W'
-            else:
-                self.log.error('The SOSS extraction is implemented for the CLEAR or F277W filters only.')
+            # TODO implement the extraction for the F277 filter.
+            if input_model.meta.instrument.filter != 'CLEAR':
+                self.log.error('The SOSS extraction is implemented for the CLEAR filter only.')
                 self.log.error('extract_1d will be skipped.')
                 input_model.meta.cal_step.extract_1d = 'SKIPPED'
                 return input_model
 
-            # Set the subarray mode being processed
-            if input_model.meta.subarray.name == 'SUBSTRIP256':
-                self.log.info('Exposure is in the SUBSTRIP256 subarray.')
-                self.log.info('Traces 1 and 2 will be modelled and decontaminated before extraction.')
-                subarray = 'SUBSTRIP256'
-            elif input_model.meta.subarray.name == 'FULL':
-                self.log.info('Exposure is in the FULL subarray.')
-                self.log.info('Traces 1 and 2 will be modelled and decontaminated before extraction.')
-                subarray = 'FULL'
-            elif input_model.meta.subarray.name == 'SUBSTRIP96':
-                self.log.info('Exposure is in the SUBSTRIP96 subarray.')
-                self.log.info('Traces of orders 1 and 2 will be modelled but only order 1 will be decontaminated before extraction.')
-                subarray = 'SUBSTRIP96'
-            else:
-                self.log.error('The SOSS extraction is implemented for the SUBSTRIP256, SUBSTRIP96 and FULL subarray only.')
+            # TODO implement the extraction for the FULL subarray (no change except ref files?),
+            # TODO and SUBSTRIP96 subarray (skip order 2, 3 box extraction?).
+            if input_model.meta.subarray.name != 'SUBSTRIP256':
+                self.log.error('The SOSS extraction is implemented for the SUBSTRIP256 subarray only.')
                 self.log.error('extract_1d will be skipped.')
                 input_model.meta.cal_step.extract_1d = 'SKIPPED'
                 return input_model
 
             # Load reference files.
-            spectrace_ref_name = self.get_reference_file(input_model, 'spectrace')
-            wavemap_ref_name = self.get_reference_file(input_model, 'wavemap')
-            specprofile_ref_name = self.get_reference_file(input_model, 'specprofile')
-            speckernel_ref_name = self.get_reference_file(input_model, 'speckernel')
+            # TODO Local placeholders inserted, correct usage example: self.get_reference_file(input_model, 'apcorr')
+            soss_ref_path = 'ref_files/20210729/output'
+            spectrace_ref_name = os.path.join(soss_ref_path, 'SOSS_ref_trace_table_SUBSTRIP256.fits.gz')  # SpecTraceModel
+            wavemap_ref_name = os.path.join(soss_ref_path, 'SOSS_ref_2D_wave_SUBSTRIP256.fits.gz')  # WaveMapModel
+            specprofile_ref_name = os.path.join(soss_ref_path, 'SOSS_ref_2D_profile_SUBSTRIP256.fits.gz')  # SpecProfileModel
+            speckernel_ref_name = os.path.join(soss_ref_path, 'SOSS_ref_spectral_kernel.fits.gz')  # SpecKernelModel
 
             # Build SOSS kwargs dictionary.
             soss_kwargs = dict()
@@ -191,13 +176,11 @@ class Extract1dStep(Step):
             soss_kwargs['devname'] = self.soss_devname
 
             # Run the extraction.
-            result, ref_outputs = soss_extract.run_extract1d(input_model,
+            result = soss_extract.run_extract1d(input_model,
                                                 spectrace_ref_name,
                                                 wavemap_ref_name,
                                                 specprofile_ref_name,
                                                 speckernel_ref_name,
-                                                subarray,
-                                                soss_filter,
                                                 soss_kwargs)
 
             # Set the step flag to complete
@@ -206,8 +189,7 @@ class Extract1dStep(Step):
 
             input_model.close()
 
-            # TODO Is it ok to return 2 elements here? Otherwise I don't know how to return the ref_outputs
-            return result, ref_outputs
+            return result
 
         # ______________________________________________________________________
         # Do the extraction for ModelContainer - this might only be WFSS data
