@@ -215,6 +215,22 @@ def estim_flux_first_order(scidata_bkg, scierr, scimask, ref_files, threshold):
     return estimate_spl
 
 
+def _mask_wv_map_centroid_outside(wave_maps, ref_files, transform, y_max, orders=(1, 2)):
+    """ Patch to mask wv_map when centroid outside"""
+    for wv_map, order in zip(wave_maps, orders):
+        # Get centroid wavelength and y position as a function of columns
+        _, y_pos, wv = get_trace_1d(ref_files, transform, order)
+        # Find min and max wavelengths with centroid inside of detector
+        wv = wv[np.isfinite(y_pos)]
+        y_pos = y_pos[np.isfinite(y_pos)]
+        idx_inside = (0 <= y_pos) & (y_pos <= y_max)
+        wv = wv[idx_inside]
+        # Set to zeros (mask) values outside
+        mask = np.isfinite(wv_map)
+        mask[mask] = (np.min(wv) > wv_map[mask]) | (wv_map[mask] > np.max(wv))
+        wv_map[mask] = 0.
+
+
 def model_image(scidata_bkg, scierr, scimask, refmask, ref_file_args, transform=None,
                 tikfac=None, n_os=5, threshold=1e-4, devname=None, soss_filter='CLEAR'):
     """Perform the spectral extraction on a single image.
@@ -252,6 +268,10 @@ def model_image(scidata_bkg, scierr, scimask, refmask, ref_file_args, transform=
     scimask = scimask | ~(scierr > 0)
 
     log.info('Extracting using transformation parameters {}'.format(transform))
+
+    # TODO This is a temporary fix until the wave_grid is specified directly in model_image
+    # Make sure wavelength maps cover only parts where the centroid is inside the detector image
+    _mask_wv_map_centroid_outside(ref_file_args[0], ref_files, transform, scidata_bkg.shape[0])
 
     # Set the c_kwargs using the minimum value of the kernels
     c_kwargs = [{'thresh': webb_ker.min_value} for webb_ker in ref_file_args[3]]
