@@ -271,7 +271,7 @@ def model_image(scidata_bkg, scierr, scimask, refmask, ref_file_args, transform=
 
     # TODO This is a temporary fix until the wave_grid is specified directly in model_image
     # Make sure wavelength maps cover only parts where the centroid is inside the detector image
-    _mask_wv_map_centroid_outside(ref_file_args[0], ref_files, transform, scidata_bkg.shape[0])
+    #_mask_wv_map_centroid_outside(ref_file_args[0], ref_files, transform, scidata_bkg.shape[0])
 
     # Set the c_kwargs using the minimum value of the kernels
     c_kwargs = [{'thresh': webb_ker.min_value} for webb_ker in ref_file_args[3]]
@@ -532,8 +532,7 @@ def run_extract1d(input_model: DataModel,
         log.info('Input is an ImageModel, processing a single integration.')
 
         # Initialize the theta, dx, dy transform parameters
-        transform = None
-        # TODO: what if transform was passed in soss_kwargs???
+        transform = soss_kwargs.pop('transform')
 
         # Received a single 2D image set dtype to float64 and convert DQ to boolian mask.
         scidata = input_model.data.astype('float64')
@@ -569,6 +568,10 @@ def run_extract1d(input_model: DataModel,
 
         # Prepare the reference file arguments.
         ref_file_args = get_ref_file_args(ref_files, transform)
+
+        # TODO This is a temporary fix until the wave_grid is specified directly in model_image
+        # Make sure wavelength maps cover only parts where the centroid is inside the detector image
+        _mask_wv_map_centroid_outside(ref_file_args[0], ref_files, transform, scidata_bkg.shape[0])
 
         # Model the traces based on optics filter configuration (CLEAR or F277W)
         if soss_filter == 'CLEAR':
@@ -636,8 +639,7 @@ def run_extract1d(input_model: DataModel,
         log.info('Input is a CubeModel containing {} integrations.'.format(nimages))
 
         # Initialize the theta, dx, dy transform parameters
-        transform = None
-        # TODO: what if transform was passed in soss_kwargs???
+        transform = soss_kwargs.pop('transform')
 
         # Build deepstack out of max N images TODO OPTIONAL.
         # TODO making a deepstack could be used to get a more robust transform and tikfac, 1/f.
@@ -681,6 +683,10 @@ def run_extract1d(input_model: DataModel,
 
             # Prepare the reference file arguments.
             ref_file_args = get_ref_file_args(ref_files, transform)
+
+            # TODO This is a temporary fix until the wave_grid is specified directly in model_image
+            # Make sure wavelength maps cover only parts where the centroid is inside the detector image
+            _mask_wv_map_centroid_outside(ref_file_args[0], ref_files, transform, scidata_bkg.shape[0])
 
             # Model the traces based on optics filter configuration (CLEAR or F277W)
             if soss_filter == 'CLEAR':
